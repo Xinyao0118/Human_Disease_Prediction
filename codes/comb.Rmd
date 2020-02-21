@@ -1,0 +1,208 @@
+---
+title: "xgboost"
+author: "Xinyao Wu"
+date: "12/5/2019"
+output: 
+  html_document:
+    number_sections: false
+    code_folding: hide
+    toc: true
+    toc_float: true
+    theme: lumen
+---
+
+```{r include=FALSE}
+ library(tidyverse)
+ library(xgboost)
+#read dataset
+diseaseInfo = read_csv("../data/Outbreak_240817.csv")
+#sample size = c(1000,2000,5000)
+# c = sample(1:17008,5000)
+#   diseaseInfo = diseaseInfo[c,]
+```
+
+#Data preparation
+```{r }
+# set a random seed & shuffle data frame
+diseaseInfo_humansRemoved <- diseaseInfo %>%
+    select(-starts_with("human"))
+diseaseLabels <- diseaseInfo %>%
+    select(humansAffected) %>% # get the column with the # of humans affected
+    is.na() %>% # is it NA?
+    magrittr::not() # switch TRUE and FALSE (using function from the magrittr package)
+# select just the numeric columns
+diseaseInfo_numeric <- diseaseInfo_humansRemoved %>%
+    select(-Id) %>% # the case id shouldn't contain useful information
+    select(-c(longitude, latitude)) %>% # location data is also in country data
+    select_if(is.numeric) # select remaining numeric columns
+region <- model.matrix(~country-1,diseaseInfo)
+diseaseInfo_numeric$is_domestic <-str_detect(diseaseInfo$speciesDescription, "domestic")
+# get a list of all the species by getting the last
+speciesList <- diseaseInfo$speciesDescription %>%
+    str_replace("[[:punct:]]", "") %>% # remove punctuation (some rows have parentheses)
+    str_extract("[a-z]*$") # extract the least word in each row
+
+# convert our list into a dataframe...
+speciesList <- tibble(species = speciesList)
+
+# and convert to a matrix using 1 hot encoding
+options(na.action='na.pass') # don't drop NA values!
+species <- model.matrix(~species-1,speciesList)
+
+diseaseInfo_numeric <- cbind(diseaseInfo_numeric, region, species)
+diseaseInfo_matrix <- data.matrix(diseaseInfo_numeric)
+
+```
+
+
+#Bootstrap
+```{r include=F}
+test.err = NULL
+inside.err = NULL
+tune.err = NULL
+original.test=NULL
+#nboot = c(50,100,200)
+nboot = 100
+
+for (i in 1:nboot) {
+n = length(diseaseLabels)
+  #randomization data
+group = sample(1:3,n,replace = TRUE,prob= c(5,4,1))
+train_data <- diseaseInfo_matrix[which(group == 1),]
+train_labels <- diseaseLabels[which(group == 1),]
+test_data <- diseaseInfo_matrix[which(group == 3),]
+test_labels <- diseaseLabels[which(group == 3),]
+
+# 
+# negative_cases <- sum(train_labels == FALSE)
+# postive_cases <- sum(train_labels == TRUE)
+
+#train model
+dtrain <- xgb.DMatrix(data = train_data, label= train_labels)
+train.model <- xgboost(data = dtrain, # the data   
+                 nround = 10, # max number of boosting iterations
+                 objective = "binary:logistic")
+#Direct
+dtest <- xgb.DMatrix(data = test_data, label = test_labels)
+pred <- predict(train.model, dtest)
+# get & print the classification error
+#err <- mean(as.numeric(pred.tune > 0.5) != inside_test_labels)
+
+original.test[i] <- mean(as.numeric(pred > 0.5) != test_labels)
+
+#Tuning 
+##second ranomization sample
+n2 = which(group==2)
+n2 = length(n2)
+df.mat<- diseaseInfo_matrix[which(group == 2),]
+df.label <- diseaseLabels[which(group == 2),]
+grp2 = sample(c(1,2),n2,replace = TRUE,prob = c(1,1))
+inside_test_data <- df.mat[which(grp2==1),]
+inside_test_labels <- df.label[which(grp2==1)]
+tune_data <- df.mat[which(grp2==2),]
+tune_labels <- df.label[which(grp2==2)]
+
+#predict tune using train
+dtest <- xgb.DMatrix(data = tune_data, label = tune_labels)
+pred.tune <- predict(train.model, dtest)
+# get & print the classification error
+#err <- mean(as.numeric(pred.tune > 0.5) != inside_test_labels)
+
+tune.err[i] <- mean(as.numeric(pred.tune > 0.5) != tune_labels)
+#print(paste("tune.test-error=", err))
+pred.tune.negative_cases <- sum(pred.tune<=0.5)
+pred.tune.postive_cases <- sum(pred.tune>0.5)
+
+#tuning set
+
+#tuning1 tune->inside
+dtune <- xgb.DMatrix(data = tune_data, label= tune_labels)
+# train a model using our training data
+model_tuned <- xgboost(data = dtune, # the data           
+                 max.depth = 3, # the maximum depth of each decision tree
+                 nround = 10, # number of boosting rounds
+                 early_stopping_rounds = 3, # if we dont see an improvement in this many rounds, stop
+                 objective = "binary:logistic", # the objective function
+                 scale_pos_weight = pred.tune.negative_cases/pred.tune.postive_cases)
+
+dtest <- xgb.DMatrix(data = inside_test_data, label= inside_test_labels)
+pred.inside <- predict(model_tuned, dtest)
+# get & print the classification error
+#err <- mean(as.numeric(pred.inside > 0.5) != inside_test_labels)
+inside.err[i] <- mean(as.numeric(pred.inside > 0.5) != inside_test_labels)
+#print(paste("inside.test-error1=", err))
+
+#tuning2
+
+
+pred.inside.negative_cases <- sum(pred.inside<=0.5)
+pred.inside.postive_cases <- sum(pred.inside>0.5)
+
+dinside <- xgb.DMatrix(data = inside_test_data, label= inside_test_labels)
+# train a model using our training data
+model_inside <- xgboost(data = dinside, # the data           
+                 max.depth = 3, # the maximum depth of each decision tree
+                 nround = 10, # number of boosting rounds
+                 early_stopping_rounds = 3, # if we dont see an improvement in this many rounds, stop
+                 objective = "binary:logistic", # the objective function
+                 scale_pos_weight = pred.inside.negative_cases/pred.inside.postive_cases)
+
+dtest <- xgb.DMatrix(data = test_data, label= test_labels)
+pred.test <- predict(model_inside, dtest)
+test.err[i] <- mean(as.numeric(pred.test> 0.5) != test_labels)
+}
+
+res = c(tune.err,inside.err,test.err,original.test)
+fac= c(rep("tune.err",nboot),rep("inside.err",nboot),rep("test.err",nboot),rep("original.test",nboot))
+res2 = data.frame(res,fac)
+res3 = res2 %>% group_by(fac) %>% summarise(avg = mean(res),var = var(res))
+```
+
+```{r}
+res = data.frame(tune.err,inside.err,test.err,original.test)
+row.names(res) = 1:nrow(res)
+ggplot(res)+geom_point(aes(x = 1:nboot,y = tune.err,color = 'tune.err'))+geom_point(aes(x = 1:nboot,y = test.err,color = 'test.err'))+geom_point(aes(x = 1:nboot,y = inside.err,color = 'inside.err'))+geom_point(aes(x = 1:nboot,y = original.test,color = 'original.test'))+labs(y = 'Misclassification Rate')
+
+res = c(tune.err,inside.err,test.err,original.test)
+fac= c(rep("tune.err",nboot),rep("inside.err",nboot),rep("test.err",nboot),rep("original.test",nboot))
+res2 = data.frame(res,fac)
+ggplot(res2,aes(x = fac,y = res))+geom_boxplot()+labs(y = 'Misclassification Rate')+theme_classic()
+
+```
+
+
+```{r}
+#samp500: collect each nboot/sample size result in excel.
+samp500 <- read_excel("../data/samp500.xlsx")
+samp500 = samp500 %>% mutate(
+  lowci = mean - sqrt(var)*1.96,
+  highci = mean + sqrt(var)*1.96,
+  MisclassificationRate = mean
+)
+
+ggplot(samp500,aes(x = size,y = MisclassificationRate,color = factor))+geom_line()+labs(title = 'Misclassification rate with different sample size')+theme_classic()
+
+ggplot(samp500,aes(x = size,y = var,color = factor))+geom_line()+labs(title = 'Misclassification rate with different sample size',y = 'variance of Misclassification rate')+theme_classic()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
