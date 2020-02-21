@@ -16,7 +16,7 @@ The outcome is whether human gets sick or not.
 
 *Objectives*
 
-The goal is to develop classiffication model to predict which outbreaks of animal diseases will lead to humans getting sick. Another goal is to compare the performance of two dierent types
+The goal is to develop classification model to predict which outbreaks of animal diseases will lead to humans getting sick. Another goal is to compare the performance of two dierent types
 
 
 *Tuning parameter selection*
@@ -43,7 +43,24 @@ variables and the test error for the model picked by Xgboost.
 
 Since the outcome is binary, performance of each model is measured by mis-classification rate. 
 
+##2 Information flow process
 
+__*Assumptions1*__
+
+Data over a threshold value can be seemed representative.
+This assumption is to limit the situation when empirical data is small so splitting to multiple sets is not appropriate.
+
+___*Assumptions2*__
+
+Classification information of large data is more closed to truth.
+This assumption is to give support to apply the predicted classication outcome from the larger previous training data as the tuning parameter to train the next model.
+
+__*Design of information flow process*__
+
+Building a series of models instead of only one.
+Each model using the previous information for tuning. In this case the odds
+of positive versus negative cases were used as additional information.
+If the data is small, a inside bootstrap process is recommended.
 
 
 
