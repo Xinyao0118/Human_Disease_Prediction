@@ -19,7 +19,7 @@ The outcome is whether human gets sick or not.
 
 __*Objectives*__
 
-The goal is to develop classification model to predict which outbreaks of animal diseases will lead to humans getting sick. Another goal is to compare the performance of two dierent types
+The goal is to develop classification model to predict which outbreaks of animal diseases will lead to humans getting sick. Another goal is to compare the performance of two diffferent types
 
 
 __*Tuning parameter selection*__
@@ -39,7 +39,7 @@ __*Train models using Xgboost to predict the outcome*__
 The input data were revised to exclude redundant information and outcome.
 The outcome were changed to a binary form. In addition, categorical variables
 were transformed to sparse matrix. All of variables in training set were numeric
-before training the model. The Xgboost system will select the most signicant
+before training the model. The Xgboost system will select the most significant
 variables and the test error for the model picked by Xgboost.
 
 __*Compare the performance of two different types of splitting data*__
